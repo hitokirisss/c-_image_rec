@@ -25,6 +25,7 @@ size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
 }
 
 cv::Mat loadImageFromURL(const std::string& url) {
+    std::cout << "Загрузка изображения: " << url << std::endl;
     CURL* curl;
     CURLcode res;
     std::string buffer;
@@ -36,7 +37,9 @@ cv::Mat loadImageFromURL(const std::string& url) {
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buffer);
         res = curl_easy_perform(curl);
         curl_easy_cleanup(curl);
-
+        
+        std::cout << "CURL код возврата: " << res << std::endl;
+        
         if (res == CURLE_OK) {
             std::vector<uchar> data(buffer.begin(), buffer.end());
             return cv::imdecode(data, cv::IMREAD_COLOR);
@@ -45,9 +48,9 @@ cv::Mat loadImageFromURL(const std::string& url) {
     return cv::Mat();
 }
 
-// Функция для приведения изображения к единому формату
 cv::Mat preprocessImage(const cv::Mat &image) {
     if (image.empty()) {
+        std::cerr << "Ошибка: пустое изображение." << std::endl;
         return cv::Mat();
     }
     cv::Mat resized;
@@ -55,23 +58,22 @@ cv::Mat preprocessImage(const cv::Mat &image) {
     return resized;
 }
 
-// Функция для вычисления среднего значения RGB
 cv::Vec3f calculateMeanRGB(const cv::Mat &image) {
     cv::Scalar meanScalar = cv::mean(image);
     return cv::Vec3f(meanScalar[2], meanScalar[1], meanScalar[0]);
 }
 
-// Функция для расчета косинусного расстояния
 float cosineDistance(const cv::Vec3f &a, const cv::Vec3f &b) {
     return 1.0f - (a.dot(b) / (cv::norm(a) * cv::norm(b)));
 }
 
-// Функция для загрузки фильмов с многопоточной загрузкой изображений
 std::vector<Movie> loadMoviesFromDatabase(const std::string &connectionString) {
     std::vector<Movie> movies;
     try {
+        std::cout << "Подключение к БД..." << std::endl;
         pqxx::connection conn(connectionString);
         pqxx::work txn(conn);
+        std::cout << "Соединение установлено!" << std::endl;
         pqxx::result result = txn.exec("SELECT id, title, genre, poster_link FROM movies;");
 
         std::vector<std::future<cv::Mat>> futures;
@@ -82,12 +84,15 @@ std::vector<Movie> loadMoviesFromDatabase(const std::string &connectionString) {
             movie.genre = row["genre"].as<std::string>();
             movie.poster_url = row["poster_link"].as<std::string>();
 
+            std::cout << "Создаю поток для загрузки: " << movie.poster_url << std::endl;
             futures.push_back(std::async(std::launch::async, loadImageFromURL, movie.poster_url));
             movies.push_back(movie);
         }
 
         for (size_t i = 0; i < movies.size(); ++i) {
+            std::cout << "Ожидание загрузки изображения: " << movies[i].poster_url << std::endl;
             movies[i].cover = preprocessImage(futures[i].get());
+            std::cout << "Изображение загружено!" << std::endl;
         }
     } catch (const std::exception &e) {
         std::cerr << "Исключение: " << e.what() << std::endl;
@@ -95,7 +100,6 @@ std::vector<Movie> loadMoviesFromDatabase(const std::string &connectionString) {
     return movies;
 }
 
-// Функция для рекомендаций
 std::vector<Movie> recommendMovies(const Movie &inputMovie, const std::vector<Movie> &movies, int topN = 5) {
     std::vector<std::pair<float, Movie>> distances;
     cv::Vec3f inputMeanRGB = calculateMeanRGB(inputMovie.cover);
@@ -127,6 +131,7 @@ int main() {
     std::cout << "Введите URL обложки фильма: ";
     std::getline(std::cin, userPosterURL);
 
+    std::cout << "Загружаем обложку фильма пользователя..." << std::endl;
     cv::Mat userCover = preprocessImage(loadImageFromURL(userPosterURL));
     if (userCover.empty()) {
         std::cerr << "Ошибка: не удалось загрузить изображение пользователя." << std::endl;
